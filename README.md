@@ -1,4 +1,6 @@
 # D11_SA
+<img width="1922" height="1112" alt="{91C40C1D-1479-4AA6-84D7-58CFC08A2CAB}" src="https://github.com/user-attachments/assets/6448af0c-fd39-4c9d-96c3-89f5c13d65b3" />
+
 
 ## Русский
 
@@ -51,3 +53,6 @@
 - **Not implemented:** **alpha transparency** for textures on models (transparent materials are not reproduced yet).
 
 **Controls:** free **camera** (plus ImGui debugging UI).
+
+
+
