@@ -403,8 +403,20 @@ void Application::RenderFrame() {
     m_render_pipeline.SetAxesVisible(m_debug_ui.IsSceneAxesVisible());
     m_render_pipeline.SetImportedSceneCubesVisible(m_debug_ui.IsFallbackCubesVisible());
     m_render_pipeline.SetImportedSceneDffVisible(m_debug_ui.IsDffMeshesVisible());
-    m_render_pipeline.SetSceneDffIdeDistanceCull(m_debug_ui.IsSceneDffIdeDistanceCull());
+    m_render_pipeline.SetOceanWaterVisible(m_debug_ui.IsSceneOceanWaterVisible());
+    m_render_pipeline.SetImportedWaterVisible(m_debug_ui.IsSceneWaterDatVisible());
+    m_render_pipeline.SetOceanSeabedVisible(m_debug_ui.IsSceneSeabedVisible());
+    m_render_pipeline.SetHorizonLineVisible(m_debug_ui.IsSceneHorizonShaderVisible());
+    m_render_pipeline.SetSkyboxVisible(m_debug_ui.IsSceneSkyboxVisible());
+    m_render_pipeline.SetSceneHdRadius(m_debug_ui.GetSceneHdRadius());
+    m_render_pipeline.SetSceneLodRadius(m_debug_ui.GetSceneLodRadius());
+    m_render_pipeline.SetSceneFogDistance(m_debug_ui.GetSceneFogDistance());
     m_render_pipeline.PumpImportedSceneDffUploads(m_debug_ui, m_game_loader);
+    m_render_pipeline.UpdateOceanWaterTexture(m_device_context, m_game_loader);
+    m_render_pipeline.UpdateWeatherState(
+        m_game_loader,
+        m_debug_ui.GetGameMinutes(),
+        m_debug_ui.GetSelectedWeatherIndex());
 
     if (m_debug_ui.ConsumeImportSceneRequest())
     {
@@ -414,6 +426,10 @@ void Application::RenderFrame() {
             static_cast<unsigned>(st));
         std::fflush(stdout);
         m_render_pipeline.ImportSceneFromLoader(m_game_loader, m_debug_ui, m_debug_ui.IsImportQuaternionMode());
+    }
+    if (m_debug_ui.ConsumeImportWaterRequest())
+    {
+        m_render_pipeline.ImportWaterFromLoader(m_game_loader);
     }
 
     m_render_pipeline.DrawFrame(

@@ -86,8 +86,9 @@ public:
     {
         using namespace DirectX;
         const float fov = XMConvertToRadians(m_fovDeg);
-        // Ближняя плоскость: слишком большое значение обрезает геометрию в упор (оси/сетка).
-        constexpr float kNearClip = 0.01f;
+        // Слишком маленький near при огромном far резко ухудшает точность depth и дает мерцание воды/террейна.
+        // 0.2f — компромисс: меньше артефактов глубины, но без заметного "реза" ближней геометрии.
+        constexpr float kNearClip = 0.2f;
         constexpr float kFarClip = 900000.0f;
         return XMMatrixPerspectiveFovRH(fov, aspect, kNearClip, kFarClip);
     }

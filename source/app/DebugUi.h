@@ -147,16 +147,28 @@ public:
         m_importSceneRequested = false;
         return requested;
     }
+    bool ConsumeImportWaterRequest()
+    {
+        const bool requested = m_importWaterRequested;
+        m_importWaterRequested = false;
+        return requested;
+    }
     bool IsImportQuaternionMode() const { return m_useQuaternionImportMode; }
     void ToggleImportRotationMode() { m_useQuaternionImportMode = !m_useQuaternionImportMode; }
     bool IsDffMeshesVisible() const { return m_showImportedDffMeshes; }
     bool IsFallbackCubesVisible() const { return m_showImportedFallbackCubes; }
-    /** Отсечение DFF по draw distance IDE (как включённый SA LOD в старом клиенте). По умолчанию выкл. — все объекты. */
-    bool IsSceneDffIdeDistanceCull() const { return m_sceneDffIdeDistanceCull; }
-
+    bool IsSceneOceanWaterVisible() const { return m_showSceneOceanWater; }
+    bool IsSceneWaterDatVisible() const { return m_showSceneWaterDat; }
+    bool IsSceneSeabedVisible() const { return m_showSceneSeabed; }
+    bool IsSceneHorizonShaderVisible() const { return m_showSceneHorizonShader; }
     bool IsSceneGridVisible() const { return m_showSceneGrid; }
     bool IsSceneAxesVisible() const { return m_showSceneAxes; }
     bool IsSceneSkyboxVisible() const { return m_showSceneSkybox; }
+    float GetGameMinutes() const { return m_gtaGameMinutes; }
+    float GetSceneHdRadius() const { return m_sceneHdRadius; }
+    float GetSceneLodRadius() const { return m_sceneLodRadius; }
+    float GetSceneFogDistance() const { return m_sceneFogDistance; }
+    int GetSelectedWeatherIndex() const { return m_selectedWeatherIndex; }
 
     void QueueModelPreviewFromIde(std::string modelName);
     bool ConsumeModelPreviewRequest(std::string& outModelName);
@@ -218,14 +230,20 @@ private:
     bool m_showControlsWindow = false;
     bool m_showSceneWindow = false;
     bool m_importSceneRequested = false;
+    bool m_importWaterRequested = false;
     bool m_useQuaternionImportMode = true;
     bool m_showImportedDffMeshes = true;
-    bool m_sceneDffIdeDistanceCull = false;
     bool m_showImportedFallbackCubes = true;
-    bool m_showSceneWater = true;
-    bool m_showSceneGrid = true;
-    bool m_showSceneAxes = true;
-    bool m_showSceneSkybox = false;
+    float m_sceneHdRadius = 850.0f;
+    float m_sceneLodRadius = 2400.0f;
+    float m_sceneFogDistance = 2600.0f;
+    bool m_showSceneOceanWater = true;
+    bool m_showSceneWaterDat = true;
+    bool m_showSceneSeabed = true;
+    bool m_showSceneHorizonShader = false;
+    bool m_showSceneGrid = false;
+    bool m_showSceneAxes = false;
+    bool m_showSceneSkybox = true;
 
     std::string m_modelPreviewPendingRequest;
     std::string m_modelPreviewDisplayName;
@@ -263,6 +281,9 @@ private:
     float m_lastFrameDt = 0.0f;
 
     float m_gtaGameMinutes = 0.0f;
+    std::filesystem::path m_timecycWeatherPath;
+    std::vector<std::string> m_timecycWeatherNames;
+    int m_selectedWeatherIndex = -1;
 
     const GameLoader* m_gameLoader = nullptr;
 

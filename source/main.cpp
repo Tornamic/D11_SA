@@ -6,9 +6,9 @@
 #include "app/Application.h"
 
 // Подсистема Windows (/SUBSYSTEM:WINDOWS) — точка входа WinMain/wWinMain, не main().
-int WINAPI wWinMain(HINSTANCE hInstance,HINSTANCE hPrevInstance,LPWSTR lpCmdLine,int nShowCmd)
+int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPWSTR lpCmdLine, _In_ int nShowCmd)
 {
-//#ifdef _DEBUG
+#ifdef _DEBUG
     AllocConsole();
     SetConsoleTitleW(L"D11_SA Debug Console");
     FILE* fs = nullptr;
@@ -18,7 +18,7 @@ int WINAPI wWinMain(HINSTANCE hInstance,HINSTANCE hPrevInstance,LPWSTR lpCmdLine
     SetConsoleCP(CP_UTF8);
     SetConsoleOutputCP(CP_UTF8);
     setlocale(LC_ALL, "Russian");
-//#endif
+#endif
 
     app::Application app{};
     return app.Run();

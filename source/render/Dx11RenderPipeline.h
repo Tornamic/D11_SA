@@ -12,6 +12,7 @@
 #include <atomic>
 #include <cstdint>
 #include <deque>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -64,15 +65,28 @@ public:
     void SetAxesVisible(bool visible) { m_draw_axes = visible; }
     void SetImportedSceneCubesVisible(bool visible) { m_draw_imported_scene_cubes = visible; }
     void SetImportedSceneDffVisible(bool visible) { m_draw_imported_scene_dff = visible; }
-    /** Масштаб дистанции (только если включено отсечение по IDE). */
-    void SetSceneDrawDistanceScale(float scale) { m_scene_draw_distance_scale = (scale > 0.01f) ? scale : 0.01f; }
-    /** Выкл. по умолчанию — все DFF, как старый клиент с выключенным SA LOD. Вкл. — меньше объектов по draw distance IDE. */
-    void SetSceneDffIdeDistanceCull(bool enabled) { m_scene_dff_ide_distance_cull = enabled; }
+    void SetOceanWaterVisible(bool visible) { m_draw_ocean_water = visible; }
+    void SetImportedWaterVisible(bool visible) { m_draw_imported_water = visible; }
+    void SetOceanSeabedVisible(bool visible) { m_draw_ocean_seabed = visible; }
+    void SetSkyboxVisible(bool visible) { m_draw_skybox = visible; }
+    void SetSceneHdRadius(float radius) { m_scene_hd_radius = (radius > 10.0f) ? radius : 10.0f; }
+    void SetSceneLodRadius(float radius) { m_scene_lod_radius = (radius > m_scene_hd_radius + 1.0f) ? radius : (m_scene_hd_radius + 1.0f); }
+    void SetSceneFogDistance(float dist) { m_scene_fog_distance = (dist > 50.0f) ? dist : 50.0f; }
+
+    /** Линия горизонта (плоскость карты z = 0): полупрозрачная полоса по геометрическому горизонту. */
+    void SetHorizonLineVisible(bool visible) { m_draw_horizon_line = visible; }
 
     /** Собирает все IPL INST (exterior), сопоставляет IDE (draw distance, flags, имя модели), загружает GPU-инстансы. */
     void ImportSceneFromLoader(const GameLoader& loader, DebugUi& debug_ui, bool useQuaternionRotation);
+    /** Загружает геометрию воды из WATER-файлов (обычно data\\water.dat) и заменяет бесконечную плоскость воды. */
+    void ImportWaterFromLoader(const GameLoader& loader);
     /** Подгружает DFF в GPU из очереди воркера (быстрый VB+IB без TXD на главном потоке). */
     void PumpImportedSceneDffUploads(DebugUi& debug_ui, const GameLoader& game_loader);
+
+    /** Бесконечные плоскости воды/дна из particle.txd (waterclear256 + seabd32). Вызывать до DrawFrame. */
+    void UpdateOceanWaterTexture(ID3D11DeviceContext* context, const GameLoader& game_loader);
+    /** Обновляет цвета неба/тумана из timecyc.dat по текущему игровому времени. */
+    void UpdateWeatherState(const GameLoader& game_loader, float game_minutes, int forced_weather_index);
 
 private:
     struct SceneInstanceGpu
@@ -99,6 +113,51 @@ private:
     bool create_depth(ID3D11Device* device, std::uint32_t width, std::uint32_t height);
     bool create_grid_and_axes(ID3D11Device* device);
     bool create_line_pipeline(ID3D11Device* device);
+    bool ensure_horizon_line_overlay(ID3D11Device* device);
+    void map_horizon_line_cb(
+        ID3D11DeviceContext* context,
+        const GtaStyleCamera& camera,
+        float aspect,
+        std::uint32_t viewport_w,
+        std::uint32_t viewport_h) const;
+    void draw_horizon_line_overlay(ID3D11DeviceContext* context);
+
+    void release_ocean_water_resources();
+    void release_ocean_water_gpu_only();
+    void release_imported_water_mesh();
+    bool ensure_ocean_water_gpu(ID3D11Device* device);
+    void map_ocean_water_cb(
+        ID3D11DeviceContext* context,
+        const DirectX::XMFLOAT4X4& mvp,
+        const GtaStyleCamera& camera,
+        float plane_z,
+        bool force_far_depth,
+        bool camera_relative_origin,
+        bool keep_inside_exempt,
+        float exempt_half,
+        const DirectX::XMFLOAT3& tint_rgb,
+        float tint_mix,
+        float alpha,
+        float mip_bias) const;
+    void draw_ocean_plane(
+        ID3D11DeviceContext* context,
+        const DirectX::XMFLOAT4X4& mvp,
+        const GtaStyleCamera& camera,
+        ID3D11ShaderResourceView* texture_srv,
+        float plane_z,
+        bool force_far_depth,
+        bool camera_relative_origin,
+        bool keep_inside_exempt,
+        float exempt_half,
+        const DirectX::XMFLOAT3& tint_rgb,
+        float tint_mix,
+        float alpha,
+        float mip_bias,
+        ID3D11DepthStencilState* depth_state,
+        ID3D11BlendState* blend_state);
+    void draw_ocean_water(ID3D11DeviceContext* context, const DirectX::XMFLOAT4X4& mvp, const GtaStyleCamera& camera);
+    void draw_ocean_seabed(ID3D11DeviceContext* context, const DirectX::XMFLOAT4X4& mvp, const GtaStyleCamera& camera);
+    void try_load_ocean_water_texture(ID3D11DeviceContext* context, const GameLoader& game_loader);
 
     static bool compile_blob(
         const char* src,
@@ -128,7 +187,11 @@ private:
         float aspect,
         std::uint32_t viewport_width,
         std::uint32_t viewport_height);
-    void map_scene_viewproj(ID3D11DeviceContext* context, const DirectX::XMFLOAT4X4& viewProj);
+    void map_scene_viewproj(
+        ID3D11DeviceContext* context,
+        const DirectX::XMFLOAT4X4& viewProj,
+        const GtaStyleCamera& camera,
+        const DirectX::XMFLOAT3& fogColor);
     void stop_scene_dff_worker();
     void release_imported_scene_dff_gpu();
     bool ensure_scene_dff_mesh_pipeline(ID3D11Device* device);
@@ -166,6 +229,7 @@ private:
     std::vector<ModelPreviewDrawBatch> m_preview_draw_batches;
     std::unordered_map<std::string, ID3D11ShaderResourceView*> m_preview_texture_srv_by_key;
     std::unordered_map<std::string, d11::data::tTxdParseResult> m_preview_txd_parse_by_key;
+    std::unordered_map<std::string, std::string> m_preview_model_txd_key_by_model;
     std::mutex m_preview_texture_cache_mutex {};
     ID3D11ShaderResourceView* m_preview_white_texture_srv = nullptr;
     ID3D11SamplerState* m_preview_sampler = nullptr;
@@ -198,23 +262,64 @@ private:
     ID3D11Texture2D* m_depth_tex = nullptr;
     ID3D11DepthStencilView* m_depth_dsv = nullptr;
     ID3D11DepthStencilState* m_depth_state = nullptr;
+    ID3D11DepthStencilState* m_depth_state_readonly_lequal = nullptr;
 
     ID3D11BlendState* m_blend_alpha = nullptr;
     ID3D11BlendState* m_blend_opaque = nullptr;
     ID3D11RasterizerState* m_rs_lines = nullptr;
     ID3D11RasterizerState* m_rs_axes = nullptr;
 
+    ID3D11Buffer* m_cb_horizon_line = nullptr;
+    ID3D11VertexShader* m_vs_horizon_line = nullptr;
+    ID3D11PixelShader* m_ps_horizon_line = nullptr;
+    ID3D11DepthStencilState* m_ds_horizon_line_no_depth_test = nullptr;
+
+    ID3D11Buffer* m_vb_ocean_water = nullptr;
+    ID3D11Buffer* m_ib_ocean_water = nullptr;
+    UINT m_ocean_water_index_count = 0;
+    ID3D11Buffer* m_vb_imported_water = nullptr;
+    ID3D11Buffer* m_ib_imported_water = nullptr;
+    UINT m_imported_water_index_count = 0;
+    ID3D11VertexShader* m_vs_ocean_water = nullptr;
+    ID3D11PixelShader* m_ps_ocean_water = nullptr;
+    ID3D11InputLayout* m_il_ocean_water = nullptr;
+    ID3D11Buffer* m_cb_ocean_water = nullptr;
+    ID3D11RasterizerState* m_rs_ocean_water = nullptr;
+    ID3D11ShaderResourceView* m_srv_ocean_water = nullptr;
+    ID3D11ShaderResourceView* m_srv_ocean_seabed = nullptr;
+    ID3D11SamplerState* m_sampler_ocean_water = nullptr;
+    bool m_ocean_water_load_finished = false;
+
     std::uint32_t m_width = 0;
     std::uint32_t m_height = 0;
     std::uint32_t m_msaa_samples = 1;
 
-    bool m_draw_grid = true;
-    bool m_draw_axes = true;
+    bool m_draw_grid = false;
+    bool m_draw_axes = false;
+    bool m_draw_ocean_water = true;
+    bool m_draw_imported_water = true;
+    bool m_draw_ocean_seabed = true;
     bool m_draw_imported_scene_cubes = true;
     bool m_draw_imported_scene_dff = true;
+    bool m_draw_horizon_line = true;
+    bool m_draw_skybox = true;
     bool m_scene_import_use_quaternion = true;
-    float m_scene_draw_distance_scale = 1.0f;
-    bool m_scene_dff_ide_distance_cull = false;
+    float m_scene_hd_radius = 850.0f;
+    float m_scene_lod_radius = 2400.0f;
+    float m_scene_fog_distance = 2600.0f;
+    float m_scene_fog_start = 900.0f;
+    float m_scene_fog_end = 2600.0f;
+
+    d11::data::tTimecycFile m_timecyc_file {};
+    std::filesystem::path m_timecyc_path_loaded {};
+    std::size_t m_timecyc_weather_index = 0;
+    float m_timecyc_minutes = 12.0f * 60.0f;
+    DirectX::XMFLOAT3 m_sky_top_rgb = DirectX::XMFLOAT3(0.38f, 0.48f, 0.66f);
+    DirectX::XMFLOAT3 m_sky_bottom_rgb = DirectX::XMFLOAT3(0.70f, 0.62f, 0.45f);
+    DirectX::XMFLOAT3 m_fog_rgb = DirectX::XMFLOAT3(0.64f, 0.62f, 0.58f);
+    ID3D11Buffer* m_cb_sky = nullptr;
+    ID3D11VertexShader* m_vs_sky = nullptr;
+    ID3D11PixelShader* m_ps_sky = nullptr;
 
     ID3D11Buffer* m_vb_scene_cube = nullptr;
     ID3D11Buffer* m_ib_scene_cube = nullptr;
@@ -244,6 +349,7 @@ private:
         std::int32_t objectId = 0;
         /** Макс. дистанция из IDE (как в старом ClientApp LOD), для отсечения DFF. */
         float drawDistanceMax = 300.0f;
+        bool isLodModel = false;
     };
     std::vector<SceneImportPlacement> m_scene_placements {};
     std::unordered_map<std::string, std::vector<std::size_t>> m_scene_placement_indices_by_model {};
@@ -267,6 +373,7 @@ private:
         DirectX::XMFLOAT4 rotation {};
         DirectX::XMFLOAT4 color {};
         float drawDistanceMax = 300.0f;
+        bool isLodModel = false;
     };
     std::vector<SceneDffDrawInstance> m_scene_dff_draw_list {};
     bool m_scene_dff_draw_list_sort_dirty = false;

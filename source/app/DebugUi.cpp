@@ -789,17 +789,111 @@ void DebugUi::DrawTopBar(
     const int mm = totalMin % 60;
     char timeStr[16];
     std::snprintf(timeStr, sizeof(timeStr), "%02d:%02d", hh, mm);
+    if (m_gameLoader != nullptr && m_gameLoader->GetLoadState() == GameLoader::LoadState::Loaded)
+    {
+        const std::filesystem::path gameRoot = m_gameLoader->GetGameRootPath();
+        const std::filesystem::path tcPath = gameRoot / "data" / "timecyc.dat";
+        if (m_timecycWeatherPath != tcPath || m_timecycWeatherNames.empty())
+        {
+            m_timecycWeatherNames.clear();
+            const d11::data::tTimecycFile tc = d11::data::ParseTimecycDat(tcPath.wstring());
+            if (tc.errorMessage.empty() && !tc.weathers.empty())
+            {
+                m_timecycWeatherNames.reserve(tc.weathers.size());
+                for (const auto& w : tc.weathers)
+                {
+                    m_timecycWeatherNames.push_back(w.name);
+                }
+            }
+            m_timecycWeatherPath = tcPath;
+            if (m_selectedWeatherIndex >= static_cast<int>(m_timecycWeatherNames.size()))
+            {
+                m_selectedWeatherIndex = -1;
+            }
+        }
+    }
+
     const ImVec2 btnLabelSize = ImGui::CalcTextSize("Время");
     const ImVec2 timeSize = ImGui::CalcTextSize(timeStr);
+    const ImVec2 weatherBtnSize = ImGui::CalcTextSize("Погода");
     const float spacing = 8.0f;
     const float btnW = btnLabelSize.x + ImGui::GetStyle().FramePadding.x * 2.0f;
-    const float totalW = btnW + spacing + timeSize.x;
+    const float weatherBtnW = weatherBtnSize.x + ImGui::GetStyle().FramePadding.x * 2.0f;
+    const float weatherComboW = 190.0f;
+    const float totalW = btnW + spacing + timeSize.x + spacing + weatherBtnW + spacing + weatherComboW;
     const float lineEndX = ImGui::GetWindowContentRegionMax().x;
     const float rightAlignedOffset = lineEndX - totalW - 6.0f;
     ImGui::SameLine((rightAlignedOffset > 0.0f) ? rightAlignedOffset : 0.0f);
-    ImGui::Button("Время", ImVec2(0.0f, topButtonHeight));
+    if (ImGui::Button("Время", ImVec2(0.0f, topButtonHeight)))
+    {
+        ImGui::OpenPopup("##TimeDialPopup");
+    }
     ImGui::SameLine(0.0f, spacing);
     ImGui::TextUnformatted(timeStr);
+    if (ImGui::BeginPopup("##TimeDialPopup"))
+    {
+        ImGui::TextUnformatted("Поверните круг, чтобы изменить время");
+        ImGui::Text("Текущее: %s", timeStr);
+        const float dialSize = 170.0f;
+        const ImVec2 dialMin = ImGui::GetCursorScreenPos();
+        ImGui::InvisibleButton("##TimeDial", ImVec2(dialSize, dialSize));
+        const ImVec2 dialCenter(dialMin.x + dialSize * 0.5f, dialMin.y + dialSize * 0.5f);
+        const float r = dialSize * 0.46f;
+        const bool dialActive = ImGui::IsItemActive();
+        const bool dialHovered = ImGui::IsItemHovered();
+        if (dialActive || (dialHovered && ImGui::IsMouseDown(ImGuiMouseButton_Left)))
+        {
+            const ImVec2 mp = ImGui::GetIO().MousePos;
+            const float dx = mp.x - dialCenter.x;
+            const float dy = mp.y - dialCenter.y;
+            if (dx * dx + dy * dy > 36.0f)
+            {
+                float a = std::atan2(dy, dx) + 1.57079632679f;
+                if (a < 0.0f)
+                {
+                    a += 6.28318530718f;
+                }
+                m_gtaGameMinutes = (a / 6.28318530718f) * (24.0f * 60.0f);
+            }
+        }
+        const float timeA = (m_gtaGameMinutes / (24.0f * 60.0f)) * 6.28318530718f - 1.57079632679f;
+        const ImVec2 hand(dialCenter.x + std::cos(timeA) * (r * 0.83f), dialCenter.y + std::sin(timeA) * (r * 0.83f));
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddCircle(dialCenter, r, IM_COL32(210, 210, 210, 245), 72, 2.0f);
+        dl->AddLine(dialCenter, hand, IM_COL32(255, 190, 80, 255), 3.0f);
+        dl->AddCircleFilled(dialCenter, 4.0f, IM_COL32(255, 190, 80, 255), 18);
+        ImGui::Dummy(ImVec2(dialSize, dialSize));
+        ImGui::EndPopup();
+    }
+    ImGui::SameLine(0.0f, spacing);
+    ImGui::Button("Погода", ImVec2(0.0f, topButtonHeight));
+    ImGui::SameLine(0.0f, spacing);
+    const char* weatherPreview = "Авто";
+    if (m_selectedWeatherIndex >= 0 && m_selectedWeatherIndex < static_cast<int>(m_timecycWeatherNames.size()))
+    {
+        weatherPreview = m_timecycWeatherNames[static_cast<std::size_t>(m_selectedWeatherIndex)].c_str();
+    }
+    ImGui::SetNextItemWidth(weatherComboW);
+    if (ImGui::BeginCombo("##WeatherSelect", weatherPreview))
+    {
+        if (ImGui::Selectable("Авто", m_selectedWeatherIndex < 0))
+        {
+            m_selectedWeatherIndex = -1;
+        }
+        for (std::size_t i = 0; i < m_timecycWeatherNames.size(); ++i)
+        {
+            const bool sel = (m_selectedWeatherIndex == static_cast<int>(i));
+            if (ImGui::Selectable(m_timecycWeatherNames[i].c_str(), sel))
+            {
+                m_selectedWeatherIndex = static_cast<int>(i);
+            }
+            if (sel)
+            {
+                ImGui::SetItemDefaultFocus();
+            }
+        }
+        ImGui::EndCombo();
+    }
 
     ImGui::PopStyleVar();
     ImGui::End();
@@ -2619,6 +2713,13 @@ void DebugUi::DrawSceneWindow(
             ImGui::SetTooltip("Переключить режим поворота (R)");
         }
 
+        if (ImGui::Button("Импорт воды", ImVec2(-1.0f, 0.0f)))
+        {
+            std::printf("[WaterImport] UI: \"Импорт воды\" clicked, request queued for next frame\n");
+            std::fflush(stdout);
+            m_importWaterRequested = true;
+        }
+
         ImGui::Spacing();
         ImGui::Checkbox("Кубы IPL (placeholder)", &m_showImportedFallbackCubes);
         ImGui::Checkbox("DFF в сцене", &m_showImportedDffMeshes);
@@ -2626,20 +2727,24 @@ void DebugUi::DrawSceneWindow(
         {
             ImGui::SetTooltip("Меши из IMG/models подгружаются в фоне после импорта (как в старом клиенте).");
         }
-        ImGui::Checkbox("Отсечение DFF по дист. IDE (LOD)", &m_sceneDffIdeDistanceCull);
-        if (ImGui::IsItemHovered())
+        ImGui::SliderFloat("HD радиус", &m_sceneHdRadius, 100.0f, 5000.0f, "%.0f");
+        if (m_sceneLodRadius < m_sceneHdRadius + 50.0f)
         {
-            ImGui::SetTooltip(
-                "Выключено — все DFF в кадре, как старый клиент в режиме «без LOD». Включено — дальние объекты по draw distance из IDE.");
+            m_sceneLodRadius = m_sceneHdRadius + 50.0f;
         }
+        ImGui::SliderFloat("LOD радиус", &m_sceneLodRadius, m_sceneHdRadius + 50.0f, 12000.0f, "%.0f");
+        ImGui::SliderFloat("Fog дистанция", &m_sceneFogDistance, 300.0f, 20000.0f, "%.0f");
         ImGui::Spacing();
-        ImGui::Checkbox("Отображать воду", &m_showSceneWater);
+        ImGui::Checkbox("Отображать воду (за grid)", &m_showSceneOceanWater);
+        ImGui::Checkbox("Отображать water.dat (внутри grid)", &m_showSceneWaterDat);
+        ImGui::Checkbox("Отображать дно", &m_showSceneSeabed);
+        ImGui::Checkbox("Шейдер горизонта", &m_showSceneHorizonShader);
         ImGui::Checkbox("Грид лист", &m_showSceneGrid);
         ImGui::Checkbox("Отображать оси X Y Z", &m_showSceneAxes);
         ImGui::Checkbox("Отображать скайбокс", &m_showSceneSkybox);
         if (ImGui::IsItemHovered())
         {
-            ImGui::SetTooltip("Скайбокс пока не подключён — переключатель зарезервирован.");
+            ImGui::SetTooltip("Включает фон как в FMOD_GEOMETRY (RGB 255,192,154).");
         }
 
         if (m_sceneStats.has_value())
