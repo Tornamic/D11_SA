@@ -1,5 +1,6 @@
 # D11_SA
 <img width="2560" height="1392" alt="image" src="https://github.com/user-attachments/assets/4edc5f1f-c531-48db-b56e-d9bb393c6b73" />
+<img width="2560" height="1392" alt="{034CC517-11AC-431A-A3C0-CE260C18BB7E}" src="https://github.com/user-attachments/assets/725c7d33-f8f1-41aa-9658-2a29d088b17e" />
 
 ## Русский
 
