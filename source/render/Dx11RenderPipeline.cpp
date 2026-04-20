@@ -43,7 +43,7 @@ constexpr float kOceanWaterPlaneZ = 0.0f;
 constexpr float kOceanSeabedPlaneZ = -70.0f;
 constexpr float kOceanWaterHalfExtent = 800000.0f;
 /** Тайлинг текстуры по мировым XY (крупнее тайл -> меньше alias/shimmer вдалеке). */
-constexpr float kOceanWaterWorldUvScale = 1.0f / 256.0f;
+constexpr float kOceanWaterWorldUvScale = 1.0f / 64.0f;
 /** Совпадает с половиной охвата линий сетки по XY: внутри квада |x|,|y|≤kGridSize вода не рисуется. */
 constexpr float kOceanWaterGridExemptHalf = kGridSize;
 /** Дно рисуем без выреза по центру. */
@@ -516,7 +516,10 @@ float4 main(VsOut pin) : SV_Target
     // Градиент начинается на геометрическом горизонте (dir.z == 0), а не от низа экрана.
     const float t = saturate(dir.z * 1.35f);
     float3 rgb = lerp(g_bottomColor.rgb, g_topColor.rgb, t);
-    const float2 d = pin.uv - g_sunUvRadius.xy;
+    float2 d = pin.uv - g_sunUvRadius.xy;
+    // Корректируем X по aspect, чтобы солнечный диск оставался круглым на любом экране.
+    const float aspect = max(g_viewportTanPad.x / max(g_viewportTanPad.y, 1.0), 1e-4);
+    d.x *= aspect;
     const float r = length(d);
     const float radius = max(g_sunUvRadius.z, 1e-4f);
     const float sun = (1.0f - smoothstep(radius * 0.75f, radius, r)) * g_sunUvRadius.w;
@@ -5349,55 +5352,69 @@ void Dx11RenderPipeline::DrawFrame(
     if (m_draw_skybox && m_vs_sky != nullptr && m_ps_sky != nullptr && m_cb_sky != nullptr &&
         m_ds_horizon_line_no_depth_test != nullptr)
     {
+        const float yaw = DirectX::XMConvertToRadians(camera.GetYawDegrees());
+        const float pitch = DirectX::XMConvertToRadians(camera.GetPitchDegrees());
+        // Для скайградиента/солнца используем "уровневый" базис без pitch,
+        // чтобы небо не плавало вверх/вниз при наклоне камеры.
+        DirectX::XMVECTOR forward = DirectX::XMVectorSet(std::sin(yaw), std::cos(yaw), 0.0f, 0.0f);
+        const DirectX::XMVECTOR worldUp = DirectX::XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f);
+        DirectX::XMVECTOR right = DirectX::XMVector3Cross(forward, worldUp);
+        if (DirectX::XMVectorGetX(DirectX::XMVector3LengthSq(right)) < 1e-8f)
+        {
+            right = DirectX::XMVectorSet(1.0f, 0.0f, 0.0f, 0.0f);
+        }
+        right = DirectX::XMVector3Normalize(right);
+        DirectX::XMVECTOR up = worldUp;
+
         const float t = std::fmod(m_timecyc_minutes, 1440.0f) / 1440.0f;
-        const float az = t * 6.28318530718f;
-        const float elev = std::sin(t * 6.28318530718f - 1.57079632679f);
-        const float xy = std::sqrt((std::max)(0.0f, 1.0f - elev * elev));
-        const DirectX::XMFLOAT3 sunDir {std::cos(az) * xy, std::sin(az) * xy, elev};
+        const float solar = t * 6.28318530718f;
+        // Траектория как в SA: 06:00 восток(+X) -> 12:00 юг(-Y) -> 18:00 запад(-X).
+        const float az = 1.57079632679f - solar;
+        const float elev = std::sin(solar - 1.57079632679f);
         const float sunIntensity = std::pow((std::max)(elev, 0.0f), 0.55f);
-        const DirectX::XMVECTOR sunW = DirectX::XMVectorSet(
-            camera.GetX() + sunDir.x * 5000.0f,
-            camera.GetY() + sunDir.y * 5000.0f,
-            camera.GetZ() + sunDir.z * 5000.0f,
-            1.0f);
-        const DirectX::XMMATRIX vpM = camera.WorldViewProjection(aspect);
-        DirectX::XMFLOAT4 sunClip {};
-        DirectX::XMStoreFloat4(&sunClip, DirectX::XMVector4Transform(sunW, vpM));
+
         float sunU = 0.5f;
         float sunV = 0.5f;
-        float vis = sunIntensity;
-        if (sunClip.w > 1.0e-5f)
+        float vis = 0.0f;
+        if (elev > 0.0f)
         {
-            sunU = 0.5f + 0.5f * (sunClip.x / sunClip.w);
-            sunV = 0.5f - 0.5f * (sunClip.y / sunClip.w);
-            if (sunU < -0.2f || sunU > 1.2f || sunV < -0.2f || sunV > 1.2f)
+            const float vw = static_cast<float>((viewport_width > 0u) ? viewport_width : 1u);
+            const float vh = static_cast<float>((viewport_height > 0u) ? viewport_height : 1u);
+            const float tanHalfFovY = std::tan(DirectX::XMConvertToRadians(camera.GetFovDegrees()) * 0.5f);
+            const float aspectSafe = (vh > 0.0f) ? (vw / vh) : 1.0f;
+            if (tanHalfFovY > 1.0e-5f)
             {
-                vis = 0.0f;
+                // Позиция солнца не зависит от pitch камеры: только азимут относительно yaw и высота elev.
+                float relAz = az - yaw;
+                while (relAz > 3.14159265359f)
+                {
+                    relAz -= 6.28318530718f;
+                }
+                while (relAz < -3.14159265359f)
+                {
+                    relAz += 6.28318530718f;
+                }
+                // Вертикаль считаем относительно горизонта камеры: это убирает "прилипание" к центру.
+                const float relElev = elev - pitch;
+                const float front = std::cos(relAz) * std::cos(relElev);
+                const float ndcX = std::tan(relAz) / (tanHalfFovY * aspectSafe);
+                const float ndcY = std::tan(relElev) / tanHalfFovY;
+                sunU = 0.5f + 0.5f * ndcX;
+                // В нашем fullscreen-UV верх экрана имеет uv.y=1, поэтому знак по Y положительный.
+                sunV = 0.5f + 0.5f * ndcY;
+                if (front > 0.0f && !(sunU < -0.2f || sunU > 1.2f || sunV < -0.2f || sunV > 1.2f))
+                {
+                    vis = sunIntensity;
+                }
             }
         }
-        else
-        {
-            vis = 0.0f;
-        }
+
         SkyCB sky {};
         sky.topColor = DirectX::XMFLOAT4(m_sky_top_rgb.x, m_sky_top_rgb.y, m_sky_top_rgb.z, 1.0f);
         sky.bottomColor = DirectX::XMFLOAT4(m_sky_bottom_rgb.x, m_sky_bottom_rgb.y, m_sky_bottom_rgb.z, 1.0f);
         sky.sunUvRadius = DirectX::XMFLOAT4(sunU, sunV, 0.06f, vis);
         sky.sunColorPower = DirectX::XMFLOAT4(1.0f, 0.87f, 0.62f, 1.35f);
         {
-            const float yaw = DirectX::XMConvertToRadians(camera.GetYawDegrees());
-            const float pitch = DirectX::XMConvertToRadians(camera.GetPitchDegrees());
-            const float cp = std::cos(pitch);
-            const float sp = std::sin(pitch);
-            DirectX::XMVECTOR forward = DirectX::XMVectorSet(std::sin(yaw) * cp, std::cos(yaw) * cp, sp, 0.0f);
-            const DirectX::XMVECTOR worldUp = DirectX::XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f);
-            DirectX::XMVECTOR right = DirectX::XMVector3Cross(forward, worldUp);
-            if (DirectX::XMVectorGetX(DirectX::XMVector3LengthSq(right)) < 1e-8f)
-            {
-                right = DirectX::XMVectorSet(1.0f, 0.0f, 0.0f, 0.0f);
-            }
-            right = DirectX::XMVector3Normalize(right);
-            DirectX::XMVECTOR up = DirectX::XMVector3Normalize(DirectX::XMVector3Cross(right, forward));
             DirectX::XMStoreFloat4(&sky.rightPad, right);
             DirectX::XMStoreFloat4(&sky.upPad, up);
             DirectX::XMStoreFloat4(&sky.forwardPad, forward);
